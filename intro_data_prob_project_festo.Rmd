@@ -1,0 +1,211 @@
+---
+title: "Exploring the BRFSS data"
+output: 
+  html_document: 
+    fig_height: 4
+    highlight: pygments
+    theme: spacelab
+---
+
+## Setup
+
+### Load packages
+
+```{r load-packages, message = FALSE}
+library(ggplot2)
+library(dplyr)
+library(gridExtra)
+library(vcd)
+library(reshape2)
+install.packages("Hmisc")
+library(Hmisc)
+```
+
+### Load data 
+
+```{r load-data}
+load("brfss2013.RData")
+```
+
+
+* * *
+
+## Part 1: Data
+
+<div id="instructions">
+The sample is a good representative of the population . Interviewers used stratified random sampling to conduct both landline telephone and cellular telephone-based surveys. Whereas randomly selected adults in households used the landline means, others who resided in private-residences/college-housing participated by using a cellular telephones. A wide coverage of selected questions was set up during the data collection to adress most essential factors hence well adressing topic of interest and consequently generalizable to US population.
+</div>
+
+It is not possible to infer causality since the experiment was done over a chosens strata of people; Hence different experiment groups were not randomly selected but were prechosen.
+It is clear that this study is observational and not experimental. There were levels of conveniences adopted as research was clustered into telephone or cellular with voluntary particpation; In addition, some reseacrch was categorically approached based on certain selection criteria and not random. These factors may raise bias when attempting to estimate the population parameters. However the bias problem was fairly resolved by introducing the weighting technique and by collecting a large volume of data over a wide variety of features.
+
+It is therefore very clear that this random sample is appropriate for estimating the population parameters.
+
+
+* * *
+
+## Part 2: Data Cleaning
+
+```{r}
+df<-select(brfss2013,cvdinfr4,cvdcrhd4,cvdstrk3,asthma3,asthnow,chcscncr,chcocncr,chccopd1,havarth3,addepev2,chckidny,diabete3,veteran3,marital,children,educa,employ1,income2,weight2,height3,numhhol2,numphon2,cpdemo1,cpdemo4,internet,renthom1,sex,pregnant,qlactlm2,useequip,blind,decide,diffwalk,diffdres,diffalon,lmtjoin3,arthdis2,arthsocl,joinpain)
+
+df_new<-df[complete.cases(df$joinpain), ]
+total_length<-length(attributes(df_new)$row)
+```
+```{r}
+sum_nan<-data.frame(t(colSums(is.na(df_new),dims = 1)))
+record_drop = list()
+for (name in colnames(sum_nan)){
+  if (c(sum_nan[name])>0.33*total_length)
+    record_drop<-append(record_drop,name)
+}
+df_new <- subset(df_new, select = !(names(df_new) %in% record_drop))
+summary(df_new)
+head(df_new)
+
+```
+
+
+The table results above show brief summary of the extreme health categories `(Excellent` and `Poor)`. As shown in the tables, many people with no exercises have Poor health. On the other hand perfect health record is observed in people with great exercise habbits.
+```{r}
+for (name in colnames(df_new)){
+  class_<-attributes(df_new[,name])$class
+  if (length(class_)){
+    t<-table(df_new[,name])
+    most_freq <-attributes(sort(t,decreasing = TRUE)[1])$names
+    df_new[,name][is.na(df_new[,name])] <- most_freq
+  }
+  else{
+    t<-df_new[,name]
+    ave<-mean(t, na.rm = TRUE) 
+    df_new[,name][is.na(df_new[,name])] <- ave
+  }
+}
+# 找到身高异常的人的数据
+df_new[,"height3"][df_new[,"height3"]<=100]<-mean(df_new$height3)
+summary(df_new)
+head(df_new)
+```
+
+## analyse
+
+
+
+```{r}
+brfss = df_new
+count_group<-brfss %>% count(joinpain,sex,qlactlm2,useequip)
+
+dt <- xtabs(n~sex+qlactlm2+useequip+joinpain, data = count_group)
+df<-ftable(dt)
+df
+mosaic( ~joinpain+sex|qlactlm2+useequip,dt,shade=TRUE,legend=TRUE,color=TRUE,zero_size = 5,labeling= labeling_border(rot_labels = c(0,0,45,0), 
+                                 just_labels = c( "center")))
+#mosaic( ~joinpain+sex+qlactlm2+useequip,dt,shade=TRUE,legend=TRUE,color=TRUE,zero_size = 5,labeling= labeling_border(rot_labels = c(0,0,0,0), 
+#                                 just_labels = c("left", "center")))
+```
+
+试图用回归拟合来判断bmi和关节疼痛的相关性（连续变量和离散变量的相关性），但是效果很差，感觉因为joinpain是离散的，并不能很好地体现相关性，故之后用箱图取可视化他们的关系
+```{r}
+regression_set<-subset(brfss,c(height3)<7777& c(height3)>200 & c(weight2)<7777&c(weight2)>50 ,select=c('height3','weight2','joinpain'))
+regression_set$height3<-regression_set$height3/3.2808399/100
+regression_set$weight2<-c(regression_set$weight2)*0.45359237
+#regression_set
+regression_set$bmi <-c(regression_set$weight2)/c((regression_set$height3*regression_set$height3))
+y <-c(regression_set$joinpain)
+plot(regression_set$bmi,y,pch=20,xlab="bmi",ylab="joinpain")
+model1 <- lm(y ~ regression_set$bmi, data = brfss) #回归拟合
+summary(model1) #回归分析表
+anova(model1) #方差分析表
+
+# 剔除异常数据
+
+regression_set_filter <-subset(regression_set,bmi<50)
+y <-c(regression_set_filter$joinpain)
+plot(regression_set_filter$bmi,y,pch=20,xlab="bmi",ylab="joinpain")
+model1 <- lm(y ~ regression_set_filter$bmi, data = brfss) #回归拟合
+summary(model1) #回归分析表
+anova(model1) #方差分析表
+
+
+```
+从箱图可以看出一点点趋势，ibm大的越容易关节炎
+```{r}
+ggplot(regression_set, aes(x=joinpain,y=bmi,group=joinpain)) +     
+  geom_boxplot(aes(fill=joinpain),outlier.colour = NA)+
+  scale_y_continuous(limits = c(0,40)) #剔除异常值
+```
+更进一步地：
+（但是这样的自变量是joinpain 因变量是ibm）
+使用单因素方差分析的步骤：
+
+  1.对数据是否符合正态分布和组间方差是否一致做检验(完成单因素方差分析的前提假设)
+  
+  2.描述性分析；建议使用箱线图来进行
+  
+  3.采用单因素方差分析判断分类变量是否对连续型变量有显著影响
+  
+  4.若不同组间有差异，通过多重检验来判断哪个处理间存在差异
+
+
+
+
+
+**Research quesion 2:**
+
+
+
+
+**Research quesion 3:**
+
+
+```{r}
+
+df_numeric<-subset(df_new, select = -c(height3, weight2))
+# defining the vector of columns to 
+# convert to numeric
+vec <- c(1:length(colnames(df_numeric)))
+  
+# apply the conversion on columns
+df_numeric[ , vec] <- apply(df_numeric[ , vec,drop=F], 2,           
+                    function(x) as.numeric(as.factor(x)))
+print("Modified DataFrame")
+head (df_numeric)
+  
+summary(df_numeric)
+```
+```{r}
+
+```
+
+This table summarises the population distribution across different employment types. It is clear that `Employed for wages` tops the list whereas `Out of work for less than 1 year` has the lowest number of people.
+
+```{r}
+# Number of males and females per employment type
+brf1 %>%
+  group_by(sex, employ1) %>%
+  summarise(counts_se = n()) %>%
+  arrange(desc(counts_se))
+```
+
+This further classifies the variability based on sex and eployment type. It shows that females are leading in most of the investigated employment categories `(employ1)`. The last three employment types here are dorminated by males as shown above.
+
+```{r}
+# plots general employee variability
+p1 <- ggplot(data = brf1, aes(x = employ1, fill = employ1)) +
+  labs(title = "Variability of employment types") +
+  labs(x = "Employment status") + labs(y = "# people") +
+  geom_bar() + theme(plot.title = element_text(hjust = 0.5))
+p1 + theme(axis.text.x=element_text(angle = 90, hjust = 1))
+#plots variability based on sex
+p2 <-ggplot(data = brf1, aes(x = employ1, fill = sex)) +
+  labs(title = "Variability of employment types with coressponding sex") +
+  labs(x = "Employment status") + labs(y = "# people") +
+  geom_bar(position = "dodge") + theme(plot.title = element_text(hjust = 0.5))
+p2 + theme(axis.text.x=element_text(angle = 90, hjust = 1))
+```
+
+
+The Histogram illustrates high  employment levels with exceptionally high population under `Employed for wages`, followed by the `retired`. `Students` are least in the employment sector. There are more females across the employment categories probably due to the fact that females are more populated acorss the states. However, there is little variability between `male` and `female` population across the different health categories. The low variability demonstrates that gender imbalance is negligible and box sexes can find work in US.
+
+
+
